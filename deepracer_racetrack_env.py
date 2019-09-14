@@ -17,7 +17,6 @@ import numpy as np
 from gym import spaces
 from PIL import Image
 from markov import utils
-import numpy as np
 
 logger = utils.Logger(__name__, logging.INFO).get_logger()
 
@@ -48,7 +47,7 @@ TRAINING_IMAGE_SIZE = (160, 120)
 RELATIVE_POSITION_OF_FRONT_OF_CAR = [0.14, 0, 0]
 
 # Normalized track distance to move with each reset
-ROUND_ROBIN_ADVANCE_DIST = 0.0
+ROUND_ROBIN_ADVANCE_DIST = 0.05
 
 # Reward to give the car when it "crashes"
 CRASHED = 1e-8
@@ -185,10 +184,7 @@ class DeepRacerRacetrackEnv(gym.Env):
             self.speed = 0
             self.action_taken = 0
             self.prev_progress = 0
-            self.prev_progress_2 = 0
             self.prev_time = 0
-            self.start_pos = 0.0
-            self.start_cnt = 0
             self.prev_point = Point(0, 0)
             self.prev_point_2 = Point(0, 0)
             self.next_state = None
@@ -198,7 +194,6 @@ class DeepRacerRacetrackEnv(gym.Env):
             self.steps = 0
             self.simulation_start_time = 0
             self.allow_servo_step_signals = False
-            self.avg_speed = 0.0
 
     def reset(self):
         if node_type == SAGEMAKER_TRAINING_WORKER:
@@ -214,7 +209,6 @@ class DeepRacerRacetrackEnv(gym.Env):
         self.speed = 0
         self.action_taken = 0
         self.prev_progress = 0
-        self.prev_progress_2 = 0
         self.prev_point = Point(0, 0)
         self.prev_point_2 = Point(0, 0)
         self.next_state = None
@@ -230,7 +224,6 @@ class DeepRacerRacetrackEnv(gym.Env):
         self.simulation_start_time = time.time()
         self.prev_time = self.simulation_start_time
         self.infer_reward_state(0, 0)
-        self.avg_speed = 0.0
 
         return self.next_state
 
@@ -373,11 +366,6 @@ class DeepRacerRacetrackEnv(gym.Env):
         step_dis = (current_progress - self.prev_progress)*self.track_length/100
 
         step_speed =  step_dis/step_time
-        #(track_length/180 -> 0), (track_lngth/90 -> 1); 180, 90 are steps
-        #norm_dis = ((1/self.track_length)*(dis_step-(self.track_length/180)))
-        #if self.steps >= 1:
-        #    self.avg_speed = (((self.steps-1)*self.avg_speed) + step_speed)/self.steps
-            
 
         # Car is off track if all wheels are outside the borders
         wheel_on_track = [self.road_poly.contains(p) for p in wheel_points]
@@ -415,7 +403,8 @@ class DeepRacerRacetrackEnv(gym.Env):
                 os._exit(1)
         else:
             done = True
-            reward = CRASHED
+            reward = (current_progress - 100)*((12*(time.time() - self.simulation_start_time)/current_progress)**4)
+            #reward = CRASHED
 
         # Reset if the car position hasn't changed in the last 2 steps
         prev_pnt_dist = min(model_point.distance(self.prev_point), model_point.distance(self.prev_point_2))
@@ -431,10 +420,8 @@ class DeepRacerRacetrackEnv(gym.Env):
         # Keep data from the previous step around
         self.prev_point_2 = self.prev_point
         self.prev_point = model_point
-        self.prev_progress_2 = self.prev_progress
-        self.prev_progress = current_progress
         self.prev_time = time.time()
-        self.start_pos = current_ndist
+        self.prev_progress = current_progress
 
         # Set the reward and done flag
         self.reward = reward
@@ -481,22 +468,8 @@ class DeepRacerRacetrackEnv(gym.Env):
     def finish_episode(self, progress):
         # Increment episode count, update start position and direction
         self.episodes += 1
-        if self.change_start and (self.episodes % 5) == 0:
-            #ROUND_ROBIN_ADVANCE_DIST = 0.0
-            '''if self.start_ndist >= 0.98:
-                self.start_ndist = 0.36
-            #elif self.start_ndist >= 0.78:
-            #    self.start_ndist = 0.34
-            else:
-                self.start_ndist = 0.98
-            #self.start_ndist = 0.33
-            if 0.05 < self.start_ndist < 0.30:
-                ROUND_ROBIN_ADVANCE_DIST = 0.15
-            else:'''
-            ROUND_ROBIN_ADVANCE_DIST = 0.04
-            #self.start_ndist = 0.36
+        if self.change_start:
             self.start_ndist = (self.start_ndist + ROUND_ROBIN_ADVANCE_DIST) % 1.0
-
         if self.alternate_dir:
             self.reverse_dir = not self.reverse_dir
         # Reset the car
